@@ -1,51 +1,81 @@
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-// ==========================================
-// 1. ALGORITHM FUNCTION DECLARATIONS
-// ==========================================
+#define MAX_LINE 1024
+#define MAX_IPS 1000
+#define IP_SIZE 50
+#define USER_SIZE 100
+#define EVENT_SIZE 100
+#define TIME_SIZE 100
 
+// String matching algorithm declarations
 int naive_search(const char *text, const char *pattern);
 int rabin_karp_search(const char *text, const char *pattern);
 int kmp_search(const char *text, const char *pattern);
 int finite_automaton_search(const char *text, const char *pattern);
 
+// Function pointer type
 typedef int (*SearchFunction)(const char *, const char *);
 
-// ==========================================
-// 2. SUSPICIOUS EVENT PATTERNS
-// ==========================================
-
-#define PATTERN_COUNT 4
-#define MAX_IPS 100
-
-const char *suspicious_patterns[PATTERN_COUNT] = {
+// Suspicious event signatures
+const char *signatures[] = {
     "LOGIN_FAILED",
     "UNAUTHORIZED_ACCESS",
     "MALWARE",
     "PORT_SCAN"
 };
 
-// ==========================================
-// 3. IP ADDRESS COUNTER
-// ==========================================
+#define SIGNATURE_COUNT 4
 
-struct IPCount {
-    char ip[64];
+// Store suspicious event counts for each IP
+typedef struct {
+    char ip[IP_SIZE];
     int count;
-};
+} IPRecord;
 
-// ==========================================
-// 4. CHECK SUSPICIOUS EVENTS
-// ==========================================
+IPRecord ip_records[MAX_IPS];
+int ip_record_count = 0;
 
+
+// Parse one CSV log line
+int parse_log_line(
+    char *line,
+    char *timestamp,
+    char *ip,
+    char *event,
+    char *username
+) {
+    char *token;
+
+    token = strtok(line, ",");
+    if (token == NULL) return 0;
+    snprintf(timestamp, TIME_SIZE, "%s", token);
+
+    token = strtok(NULL, ",");
+    if (token == NULL) return 0;
+    snprintf(ip, IP_SIZE, "%s", token);
+
+    token = strtok(NULL, ",");
+    if (token == NULL) return 0;
+    snprintf(event, EVENT_SIZE, "%s", token);
+
+    token = strtok(NULL, ",\r\n");
+    if (token == NULL) return 0;
+    snprintf(username, USER_SIZE, "%s", token);
+
+    return 1;
+}
+
+
+// Check whether an event is suspicious
 int is_suspicious_event(
     const char *event,
     SearchFunction search
 ) {
-    for (int i = 0; i < PATTERN_COUNT; i++) {
-        if (search(event, suspicious_patterns[i]) > 0) {
+    for (int i = 0; i < SIGNATURE_COUNT; i++) {
+        if (search(event, signatures[i]) > 0) {
             return 1;
         }
     }
@@ -53,23 +83,57 @@ int is_suspicious_event(
     return 0;
 }
 
-// ==========================================
-// 5. GET THREAT SEVERITY
-// ==========================================
 
-const char *get_severity(
-    const char *event,
-    int ip_count
-) {
+// Find or create an IP record
+int find_ip_record(const char *ip) {
+    for (int i = 0; i < ip_record_count; i++) {
+        if (strcmp(ip_records[i].ip, ip) == 0) {
+            return i;
+        }
+    }
+
+    if (ip_record_count >= MAX_IPS) {
+        return -1;
+    }
+
+    snprintf(
+        ip_records[ip_record_count].ip,
+        IP_SIZE,
+        "%s",
+        ip
+    );
+
+    ip_records[ip_record_count].count = 0;
+
+    ip_record_count++;
+
+    return ip_record_count - 1;
+}
+
+
+// Get the suspicious event count for an IP
+int get_ip_count(const char *ip) {
+    for (int i = 0; i < ip_record_count; i++) {
+        if (strcmp(ip_records[i].ip, ip) == 0) {
+            return ip_records[i].count;
+        }
+    }
+
+    return 0;
+}
+
+
+// Assign severity based on project rules
+const char *get_severity(const char *event, int ip_count) {
+
     if (strcmp(event, "MALWARE") == 0) {
         return "CRITICAL";
     }
 
-    if (strcmp(event, "UNAUTHORIZED_ACCESS") == 0) {
-        return "HIGH";
-    }
-
-    if (strcmp(event, "PORT_SCAN") == 0) {
+    if (
+        strcmp(event, "UNAUTHORIZED_ACCESS") == 0 ||
+        strcmp(event, "PORT_SCAN") == 0
+    ) {
         return "HIGH";
     }
 
@@ -84,154 +148,160 @@ const char *get_severity(
     return "LOW";
 }
 
-// ==========================================
-// 6. FIND IP ADDRESS COUNT
-// ==========================================
 
-int find_ip_count(
-    struct IPCount ip_list[],
-    int ip_total,
-    const char *ip
-) {
-    for (int i = 0; i < ip_total; i++) {
-        if (strcmp(ip_list[i].ip, ip) == 0) {
-            return ip_list[i].count;
-        }
-    }
-
-    return 0;
-}
-
-// ==========================================
-// 7. MAIN THREAT DETECTION FUNCTION
-// ==========================================
-
-void detect_threats_with_algorithm(
+// First pass: count suspicious events for every IP
+void count_suspicious_events(
     const char *filename,
     SearchFunction search
 ) {
     FILE *file = fopen(filename, "r");
 
     if (file == NULL) {
-        printf("Error: Could not open log file.\n");
+        printf("Error: Cannot open log file: %s\n", filename);
         return;
     }
 
-    char line[1024];
-    char original_line[1024];
+    char line[MAX_LINE];
+    char timestamp[TIME_SIZE];
+    char ip[IP_SIZE];
+    char event[EVENT_SIZE];
+    char username[USER_SIZE];
 
-    struct IPCount ip_list[MAX_IPS];
+    ip_record_count = 0;
 
-    int ip_total = 0;
-    int suspicious_count = 0;
+    while (fgets(line, sizeof(line), file)) {
 
-    // --------------------------------------
-    // FIRST PASS: COUNT SUSPICIOUS EVENTS
-    // FROM EACH IP ADDRESS
-    // --------------------------------------
+        char copy[MAX_LINE];
+        snprintf(copy, sizeof(copy), "%s", line);
 
-    while (fgets(line, sizeof(line), file) != NULL) {
-
-        char *timestamp = strtok(line, ",\r\n");
-        char *ip = strtok(NULL, ",\r\n");
-        char *event = strtok(NULL, ",\r\n");
-
-        if (timestamp == NULL || ip == NULL || event == NULL) {
+        if (!parse_log_line(
+            copy, timestamp, ip, event, username
+        )) {
             continue;
         }
 
         if (is_suspicious_event(event, search)) {
 
-            int found = 0;
+            int index = find_ip_record(ip);
 
-            for (int i = 0; i < ip_total; i++) {
-
-                if (strcmp(ip_list[i].ip, ip) == 0) {
-                    ip_list[i].count++;
-                    found = 1;
-                    break;
-                }
-            }
-
-            if (!found && ip_total < MAX_IPS) {
-
-                strncpy(ip_list[ip_total].ip, ip,
-                        sizeof(ip_list[ip_total].ip) - 1);
-
-                ip_list[ip_total].ip[
-                    sizeof(ip_list[ip_total].ip) - 1
-                ] = '\0';
-
-                ip_list[ip_total].count = 1;
-
-                ip_total++;
+            if (index >= 0) {
+                ip_records[index].count++;
             }
         }
     }
-
-    // --------------------------------------
-    // SECOND PASS: DISPLAY DETECTED THREATS
-    // --------------------------------------
-
-    rewind(file);
-
-    printf("\n====================================\n");
-    printf("       THREAT DETECTION RESULTS\n");
-    printf("====================================\n");
-
-    while (fgets(line, sizeof(line), file) != NULL) {
-
-        strcpy(original_line, line);
-
-        char *timestamp = strtok(line, ",\r\n");
-        char *ip = strtok(NULL, ",\r\n");
-        char *event = strtok(NULL, ",\r\n");
-        char *username = strtok(NULL, ",\r\n");
-
-        if (timestamp == NULL || ip == NULL || event == NULL) {
-            continue;
-        }
-
-        if (is_suspicious_event(event, search)) {
-
-            suspicious_count++;
-
-            int count = find_ip_count(
-                ip_list,
-                ip_total,
-                ip
-            );
-
-            const char *severity = get_severity(event, count);
-
-            printf("\n[WARNING] Suspicious activity detected!\n");
-
-            printf("Timestamp: %s\n", timestamp);
-            printf("IP Address: %s\n", ip);
-            printf("Event: %s\n", event);
-
-            if (username != NULL) {
-                printf("Username: %s\n", username);
-            }
-
-            printf("IP Suspicious Event Count: %d\n", count);
-            printf("Severity: %s\n", severity);
-
-            printf("Log: %s", original_line);
-        }
-    }
-
-    printf("\n====================================\n");
-    printf("Total suspicious entries: %d\n", suspicious_count);
-    printf("====================================\n");
 
     fclose(file);
 }
 
-// ==========================================
-// 8. ORIGINAL FUNCTION COMPATIBILITY
-// ==========================================
 
+// Second pass: print and export suspicious events
+void export_threat_report(
+    const char *filename,
+    SearchFunction search
+) {
+    FILE *file = fopen(filename, "r");
+
+    if (file == NULL) {
+        printf("Error: Cannot open log file: %s\n", filename);
+        return;
+    }
+
+    FILE *report = fopen("output/threat_report.csv", "w");
+
+    if (report == NULL) {
+        printf("Error: Could not create output/threat_report.csv\n");
+        printf("Check that the output folder exists.\n");
+        fclose(file);
+        return;
+    }
+
+    // Write CSV column headings
+    fprintf(
+        report,
+        "Timestamp,IP,Event,Username,IP_Event_Count,Severity\n"
+    );
+
+    char line[MAX_LINE];
+    char timestamp[TIME_SIZE];
+    char ip[IP_SIZE];
+    char event[EVENT_SIZE];
+    char username[USER_SIZE];
+
+    int total_suspicious = 0;
+
+    printf("\n========== THREAT DETECTION REPORT ==========\n");
+
+    while (fgets(line, sizeof(line), file)) {
+
+        char copy[MAX_LINE];
+        snprintf(copy, sizeof(copy), "%s", line);
+
+        if (!parse_log_line(
+            copy, timestamp, ip, event, username
+        )) {
+            continue;
+        }
+
+        if (is_suspicious_event(event, search)) {
+
+            int ip_count = get_ip_count(ip);
+
+            const char *severity = get_severity(event, ip_count);
+
+            // Display threat in terminal
+            printf("\n[WARNING] Suspicious activity detected!\n");
+            printf("Timestamp: %s\n", timestamp);
+            printf("IP Address: %s\n", ip);
+            printf("Event: %s\n", event);
+            printf("Username: %s\n", username);
+            printf("IP Suspicious Event Count: %d\n", ip_count);
+            printf("Severity: %s\n", severity);
+
+            // Export threat to CSV file
+            fprintf(
+                report,
+                "%s,%s,%s,%s,%d,%s\n",
+                timestamp,
+                ip,
+                event,
+                username,
+                ip_count,
+                severity
+            );
+
+            total_suspicious++;
+        }
+    }
+
+    printf("\n=============================================\n");
+    printf("Total suspicious entries: %d\n", total_suspicious);
+    printf("Report saved to: output/threat_report.csv\n");
+    printf("=============================================\n");
+
+    fclose(file);
+    fclose(report);
+}
+
+
+// Main function called by main.c
+void detect_threats_with_algorithm(
+    const char *filename,
+    SearchFunction search
+) {
+    if (search == NULL) {
+        printf("Error: No search algorithm selected.\n");
+        return;
+    }
+
+    // Pass 1: Count suspicious activity by IP
+    count_suspicious_events(filename, search);
+
+    // Pass 2: Generate report
+    export_threat_report(filename, search);
+}
+
+
+// Backward-compatible function
 void detect_threats(const char *filename) {
     detect_threats_with_algorithm(filename, naive_search);
 }

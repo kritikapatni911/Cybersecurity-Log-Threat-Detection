@@ -1,0 +1,11 @@
+@'
+# Compiled executables
+*.exe
+*.o
+
+# Temporary files
+*.tmp
+
+# Editor settings
+.vscode/
+'@ | Set-Content .gitignore
