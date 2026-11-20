@@ -1,5 +1,5 @@
 Algorithm,Execution_Time_Seconds,Matches_Found,Iterations
 Naive,0.005000,4,10000
-Rabin-Karp,0.019000,4,10000
-KMP,0.006000,4,10000
-Finite Automaton,1.388000,4,10000
+Rabin-Karp,0.013000,4,10000
+KMP,0.004000,4,10000
+Finite Automaton,1.913000,4,10000
